@@ -94,10 +94,11 @@ const App: React.FC = () => {
 
   return (
     <div style={{ padding: 20 }}>
-      <h1>LOL Miner Nexa Dashboard</h1>
+      <h1>MineBench-GPU</h1>
+      <h2>RVN coin</h2>
 
       <div style={{ margin: "10px 0" }}>
-        <input
+        {/* <input
           value={wallet}
           onChange={e => setWallet(e.target.value)}
           placeholder="Wallet"
@@ -108,9 +109,9 @@ const App: React.FC = () => {
           onChange={e => setWorker(e.target.value)}
           placeholder="Worker"
           style={{ marginRight: 10 }}
-        />
-        <button onClick={startMiner} style={{ marginRight: 5 }}>Start Miner</button>
-        <button onClick={stopMiner}>Stop Miner</button>
+        /> */}
+        <button onClick={startMiner} style={{ marginRight: 5 }}>Start Benchmark</button>
+        <button onClick={stopMiner}>Stop Benchmark</button>
         <p>Status: {status}</p>
       </div>
 
