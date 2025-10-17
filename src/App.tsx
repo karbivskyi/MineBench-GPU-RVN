@@ -17,7 +17,7 @@ interface StatsPoint {
 }
 
 const App: React.FC = () => {
-  const [wallet, setWallet] = useState("nexa:nqtsq5g59fu9g23fkdgfmxpsatwekq6wv6wmn66g20srq2dk");
+  const [wallet, setWallet] = useState("RVUqoVcGCL3UgqokGMULnZNmjsKLPAcg3g");
   const [worker, setWorker] = useState("4070");
   const [status, setStatus] = useState("stopped");
   const [history, setHistory] = useState<StatsPoint[]>([]);
@@ -72,11 +72,11 @@ const App: React.FC = () => {
 
   const fetchPoolStats = async () => {
     try {
-      const res = await fetch(`https://api.2miners.com/v2/nexa/miner/${wallet}`);
+      const res = await fetch(`https://rvn.2miners.com/api/accounts/${wallet}`);
       const data = await res.json();
 
       if (data?.stats) {
-        addLog(`Pool Stats - Hashrate: ${(data.stats.hashrate / 1e6).toFixed(2)} MH/s, Paid: ${(data.paid / 1e6).toFixed(6)} NEXA`);
+         addLog(`Pool Stats - Hashrate: ${(data.currentHashrate / 1e6).toFixed(2)} MH/s, Paid: ${(data.stats?.paid / 1e8).toFixed(4)} RVN`);
       }
     } catch {
       addLog("Error fetching pool stats");

@@ -1,42 +1,82 @@
 const fs = require("fs");
+const { spawn } = require("child_process");
+const path = require("path");
+const { app, BrowserWindow, ipcMain } = require("electron");
 
-ipcMain.handle("start-miner", async () => {
-  const minerPath = path.join(__dirname, "miner", "Gminer", "miner.exe");
+let miner = null;
 
-  // Перевіряємо, чи існує файл майнера
-  if (!fs.existsSync(minerPath)) {
-    console.error(`Miner not found at: ${minerPath}`);
-    return `Miner not found at: ${minerPath}`;
-  }
+ipcMain.handle("start-miner", async (event, wallet = "RVUqoVcGCL3UgqokGMULnZNmjsKLPAcg3g", worker = "4070") => {
+  try {
+    // __dirname -> папка де electron.cjs знаходиться (наприклад: .../project/electron)
+    // miner знаходиться на одному рівні з electron: .../project/miner/Gminer/miner.exe
+    const minerPath = "/miner/Gminer/miner.exe";
 
-  // Запуск майнера
-  miner = spawn(minerPath, [
-    "--algo", "kawpow",
-    "--pool", "rvn.2miners.com:6060",
-    "--user", `RVUqoVcGCL3UgqokGMULnZNmjsKLPAcg3g.4070`,
-    "--apiport", "4067",
-    "--dual-gpu" // якщо потрібна підтримка AMD + NVIDIA (залежить від версії Gminer)
-  ]);
-
-  // Логування stdout
-  miner.stdout.on("data", (data) => {
-    const output = data.toString();
-    console.log(`Miner: ${output}`);
-
-    // Опціонально: парсимо рядки з інформацією про GPU
-    if (output.includes("GPU")) {
-      mainWindow.webContents.send("miner-log", output);
+    if (!fs.existsSync(minerPath)) {
+      const msg = `Miner not found at: ${minerPath}`;
+      console.error(msg);
+      return msg;
     }
-  });
 
-  // Логування stderr
-  miner.stderr.on("data", (data) => console.error(`Error: ${data.toString()}`));
+    // Якщо процес вже запущений — повідомляємо
+    if (miner) {
+      return "Miner already running";
+    }
 
-  // Обробка помилок запуску
-  miner.on("error", (err) => console.error(`Failed to start miner: ${err}`));
+    // Параметри запуску для Gminer (kawpow / RVN)
+    const args = [
+      "--algo", "kawpow",
+      "--server", "rvn.2miners.com",
+      "--port", "6060",
+      "--user", `${wallet}.${worker}`,
+      "--api", "0.0.0.0:4067" // робимо веб-інтерфейс доступним локально
+    ];
 
-  // Закриття процесу
-  miner.on("close", (code) => console.log(`Miner exited with code ${code}`));
+    miner = spawn(minerPath, args, { windowsHide: true });
 
-  return "Miner started";
+    miner.stdout.on("data", (data) => {
+      const output = data.toString();
+      console.log(`Miner stdout: ${output}`);
+      // пересилаємо логи в рендерер (UI)
+      if (event && event.sender) {
+        event.sender.send("miner-log", output);
+      }
+    });
+
+    miner.stderr.on("data", (data) => {
+      const error = data.toString();
+      console.error(`Miner stderr: ${error}`);
+      if (event && event.sender) event.sender.send("miner-error", error);
+    });
+
+    miner.on("error", (err) => {
+      console.error("Failed to start miner:", err);
+      miner = null;
+      if (event && event.sender) event.sender.send("miner-error", String(err));
+    });
+
+    miner.on("close", (code, signal) => {
+      console.log(`Miner exited with code ${code} signal ${signal}`);
+      miner = null;
+      if (event && event.sender) event.sender.send("miner-exit", { code, signal });
+    });
+
+    return "Miner started";
+  } catch (err) {
+    console.error("start-miner exception:", err);
+    return `Error starting miner: ${err?.message ?? String(err)}`;
+  }
+});
+
+ipcMain.handle("stop-miner", () => {
+  if (miner) {
+    try {
+      miner.kill();
+      miner = null;
+      return "Miner stopped";
+    } catch (err) {
+      console.error("Error stopping miner:", err);
+      return `Error stopping miner: ${err?.message ?? String(err)}`;
+    }
+  }
+  return "Miner not running";
 });
