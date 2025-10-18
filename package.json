@@ -7,7 +7,7 @@
     "dev": "vite",
     "clean": "rimraf dist",
     "build": "vite build",
-    "dist": "npm run clean && vite build && electron-builder --dir && move dist web-dist && electron-builder",
+    "dist": "npm run clean && vite build && electron-builder --dir && electron-builder",
     "build:icon": "node ./scripts/make-icon.cjs",
     "electron": "electron electron/main.cjs",
     "dev:all": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron\""
