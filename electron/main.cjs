@@ -3,70 +3,115 @@ const { spawn } = require("child_process");
 const path = require("path");
 const { app, BrowserWindow, ipcMain } = require("electron");
 
+let mainWindow = null;
 let miner = null;
 
+// Функція для логування
+function log(message) {
+  console.log(new Date().toISOString(), message);
+}
+
+// Створення головного вікна
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      preload: path.join(__dirname, "preload.cjs")
+    }
+  });
+
+  mainWindow.loadURL("http://localhost:5173");
+  if (process.env.NODE_ENV === "development") {
+    mainWindow.webContents.openDevTools();
+  }
+}
+
+// Запуск майнера
 ipcMain.handle("start-miner", async (event, wallet = "RVUqoVcGCL3UgqokGMULnZNmjsKLPAcg3g", worker = "4070") => {
   try {
-    // __dirname -> папка де electron.cjs знаходиться (наприклад: .../project/electron)
-    // miner знаходиться на одному рівні з electron: .../project/miner/Gminer/miner.exe
-    const minerPath = "/miner/Gminer/miner.exe";
+    // Визначаємо шлях до майнера залежно від режиму запуску
+
+    let minerDir, minerPath;
+    if (app.isPackaged) {
+      // Production: miner/ поряд із .exe
+      const exeDir = path.dirname(process.execPath);
+      minerDir = path.join(exeDir, "miner", "T-rex");
+      minerPath = path.join(minerDir, "t-rex.exe");
+      log(`[start-miner] app.isPackaged=true, exeDir=${exeDir}`);
+    } else {
+      // dev: miner/ поряд з electron/
+      minerDir = path.join(__dirname, "..", "miner", "T-rex");
+      minerPath = path.join(minerDir, "t-rex.exe");
+      log(`[start-miner] app.isPackaged=false, dev minerDir=${minerDir}`);
+    }
+
+    log(`[start-miner] minerPath=${minerPath}`);
 
     if (!fs.existsSync(minerPath)) {
-      const msg = `Miner not found at: ${minerPath}`;
-      console.error(msg);
+      const msg = `T-Rex not found at: ${minerPath}`;
+      log(msg);
       return msg;
     }
 
-    // Якщо процес вже запущений — повідомляємо
     if (miner) {
       return "Miner already running";
     }
 
-    // Параметри запуску для Gminer (kawpow / RVN)
+    // T-Rex RVN kawpow launch params
     const args = [
-      "--algo", "kawpow",
-      "--server", "rvn.2miners.com",
-      "--port", "6060",
-      "--user", `${wallet}.${worker}`,
-      "--api", "0.0.0.0:4067" // робимо веб-інтерфейс доступним локально
+      "-a", "kawpow",
+      "-o", "stratum+tcp://rvn.2miners.com:6060",
+      "-u", `${wallet}.${worker}`,
+      "--api-bind-http", "127.0.0.1:4067"
     ];
 
-    miner = spawn(minerPath, args, { windowsHide: true });
+    log('Running T-Rex with: ' + args.join(' '));
+
+    miner = spawn(minerPath, args, {
+      windowsHide: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
+      cwd: minerDir
+    });
 
     miner.stdout.on("data", (data) => {
       const output = data.toString();
-      console.log(`Miner stdout: ${output}`);
-      // пересилаємо логи в рендерер (UI)
-      if (event && event.sender) {
-        event.sender.send("miner-log", output);
-      }
+      log(`T-Rex stdout: ${output}`);
+      if (event?.sender) event.sender.send("miner-log", output);
     });
 
     miner.stderr.on("data", (data) => {
       const error = data.toString();
-      console.error(`Miner stderr: ${error}`);
-      if (event && event.sender) event.sender.send("miner-error", error);
+      log(`T-Rex stderr: ${error}`);
+      if (event?.sender) event.sender.send("miner-error", error);
     });
 
     miner.on("error", (err) => {
-      console.error("Failed to start miner:", err);
+      log(`T-Rex error: ${err}`);
       miner = null;
-      if (event && event.sender) event.sender.send("miner-error", String(err));
+      if (event?.sender) event.sender.send("miner-error", String(err));
     });
 
     miner.on("close", (code, signal) => {
-      console.log(`Miner exited with code ${code} signal ${signal}`);
+      log(`T-Rex exited: code=${code}, signal=${signal}`);
       miner = null;
-      if (event && event.sender) event.sender.send("miner-exit", { code, signal });
+      if (event?.sender) event.sender.send("miner-exit", { code, signal });
     });
 
     return "Miner started";
   } catch (err) {
-    console.error("start-miner exception:", err);
-    return `Error starting miner: ${err?.message ?? String(err)}`;
+    const msg = `Error: ${err?.message ?? String(err)}`;
+    log(msg);
+    log(`Full error object: ${JSON.stringify(err, Object.getOwnPropertyNames(err))}`);
+    return msg;
   }
 });
 
+// Зупинка майнера
 ipcMain.handle("stop-miner", () => {
   if (miner) {
     try {
@@ -74,9 +119,24 @@ ipcMain.handle("stop-miner", () => {
       miner = null;
       return "Miner stopped";
     } catch (err) {
-      console.error("Error stopping miner:", err);
-      return `Error stopping miner: ${err?.message ?? String(err)}`;
+      log(`Stop error: ${err}`);
+      return `Error: ${err.message}`;
     }
   }
   return "Miner not running";
+});
+
+// Ініціалізація додатку
+app.whenReady().then(createWindow);
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
+
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
