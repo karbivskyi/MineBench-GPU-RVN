@@ -20,15 +20,37 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
-      preload: path.join(__dirname, "preload.cjs")
-    }
+      preload: path.join(__dirname, "preload.cjs"),
+    },
   });
 
-  mainWindow.loadURL("http://localhost:5173");
-  if (process.env.NODE_ENV === "development") {
+  // === 🟢 Production mode (після build'у) ===
+  if (app.isPackaged) {
+    const indexPath = path.join(app.getAppPath(), "web-dist", "index.html");
+
+
+
+    if (indexPath) {
+      log(`[createWindow] ✅ Found index.html at: ${indexPath}`);
+      mainWindow.loadFile(indexPath).catch((err) => {
+        log(`[createWindow] ❌ loadFile error: ${err}`);
+        mainWindow.webContents.openDevTools();
+      });
+    } else {
+      log(`[createWindow] ❌ No index.html found in packaged app`);
+      mainWindow.loadURL(
+        "data:text/html,<h2 style='font-family:sans-serif;color:#c00'>index.html not found</h2>"
+      );
+      mainWindow.webContents.openDevTools();
+    }
+
+    // === 🟡 Development mode (npm start) ===
+  } else {
+    mainWindow.loadURL("http://localhost:5173");
     mainWindow.webContents.openDevTools();
   }
 }
+
 
 // Запуск майнера
 ipcMain.handle("start-miner", async (event, wallet = "RVUqoVcGCL3UgqokGMULnZNmjsKLPAcg3g", worker = "4070") => {
