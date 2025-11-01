@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -24,29 +24,51 @@ const App: React.FC = () => {
   const [log, setLog] = useState<string[]>([]);
   const [duration, setDuration] = useState<number>(30); // seconds
   const [remaining, setRemaining] = useState<number | null>(null);
-  const [results, setResults] = useState<{avg: number; max: number; samples: number} | null>(null);
+  const [results, setResults] = useState<{ avg: number; max: number; samples: number } | null>(null);
   const statsRef = useRef<number[]>([]);
   const deviceStatsRef = useRef<Record<string, number[]>>({});
   const deviceNamesRef = useRef<Record<string, string>>({});
   const [deviceResults, setDeviceResults] = useState<Array<{ rig_id: string; name: string; avg: number; max: number; samples: number }>>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const statsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isStoppingRef = useRef(false);
+  const latestHashrate = history.length > 0 ? history[history.length - 1].hashrate : 0;
+  const unit = useMemo(() => getHashrateUnit(latestHashrate), [latestHashrate]);
+  const normalizedHistory = useMemo(
+    () => history.map(pt => ({
+      ...pt,
+      hashrate: normalizeHashrate(pt.hashrate),
+    })),
+    [history]
+  );
+
 
   const addLog = (message: string) => {
     setLog(prev => [...prev.slice(-100), `${new Date().toLocaleTimeString()} - ${message}`]);
   };
-
+  function getHashrateUnit(hr: number) {
+    if (hr >= 1e9) return "GH/s";
+    if (hr >= 1e6) return "MH/s";
+    if (hr >= 1e3) return "KH/s";
+    return "H/s";
+  }
+  function normalizeHashrate(hr: number) {
+    if (hr >= 1e9) return hr / 1e9;
+    if (hr >= 1e6) return hr / 1e6;
+    if (hr >= 1e3) return hr / 1e3;
+    return hr;
+  }
   const startMiner = async () => {
     try {
-      const res = await window.electron.invoke("start-miner", wallet, worker);
+      const res = await window.electron.invoke("start-benchmark", wallet, worker);
       setStatus(res);
-      addLog("Miner started");
-  // reset stats
-  statsRef.current = [];
-  deviceStatsRef.current = {};
-  deviceNamesRef.current = {};
-  setDeviceResults([]);
-  setResults(null);
+      addLog("Benchmark started");
+      // reset stats
+      statsRef.current = [];
+      deviceStatsRef.current = {};
+      deviceNamesRef.current = {};
+      setDeviceResults([]);
+      setResults(null);
       setRemaining(duration);
       // start auto-stop timer
       if (timerRef.current) clearInterval(timerRef.current);
@@ -67,33 +89,24 @@ const App: React.FC = () => {
     } catch (err) {
       console.error(err);
       setStatus("error");
-      addLog("Error starting miner");
+      addLog("Error starting benchmark");
     }
   };
 
   const stopMiner = async () => {
+    if (isStoppingRef.current) return;
+    isStoppingRef.current = true;
+
     try {
-      const res = await window.electron.invoke("stop-miner");
-      setStatus(res);
-      addLog("Miner stopped");
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      if (statsIntervalRef.current) {
-        clearInterval(statsIntervalRef.current);
-        statsIntervalRef.current = null;
-      }
-      setRemaining(null);
-      // compute aggregated results (overall)
       const samples = statsRef.current.length;
+      let benchmarkData = undefined;
       if (samples > 0) {
         const sum = statsRef.current.reduce((a, b) => a + b, 0);
         const avg = sum / samples;
         const max = Math.max(...statsRef.current);
         setResults({ avg, max, samples });
+        benchmarkData = { avg_hashrate: avg, max_hashrate: max };
       }
-
       // compute per-device results
       const perDevice: Array<{ rig_id: string; name: string; avg: number; max: number; samples: number }> = [];
       for (const rig_id of Object.keys(deviceStatsRef.current)) {
@@ -106,14 +119,33 @@ const App: React.FC = () => {
         perDevice.push({ rig_id, name: deviceNamesRef.current[rig_id] || rig_id, avg: avgD, max: maxD, samples: samplesD });
       }
       if (perDevice.length > 0) setDeviceResults(perDevice);
+
+      // Тепер один раз зупиняємо майнер
+      const res = await window.electron.invoke("stop-benchmark", benchmarkData);
+      setStatus(res);
+      addLog("Benchmark stopped");
+
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (statsIntervalRef.current) {
+        clearInterval(statsIntervalRef.current);
+        statsIntervalRef.current = null;
+      }
+      setRemaining(null);
+
     } catch (err) {
       console.error(err);
       setStatus("error");
-      addLog("Error stopping miner");
+      addLog("Error stopping benchmark");
+    } finally {
+      isStoppingRef.current = false;
     }
   };
 
   const fetchStats = async () => {
+    if (status === "benchmark completed") return;
     try {
       const res = await fetch("http://127.0.0.1:4067/summary");
       const data = await res.json();
@@ -121,8 +153,9 @@ const App: React.FC = () => {
       if (data?.gpus && data.gpus.length > 0) {
         // handle multiple GPUs
         const points: StatsPoint[] = data.gpus.map((g: any, i: number) => {
-          const hr = (g.hashrate ?? g.hash ?? 0) / 1e6; // try several keys
+          const hrRaw = (g.hashrate ?? g.hash ?? 0);
           const temp = g.temperature ?? g.temp ?? 0;
+          const hr = hrRaw; // конвертуємо перед додаванням
           return { time: new Date().toLocaleTimeString(), hashrate: hr, temp };
         });
 
@@ -134,6 +167,7 @@ const App: React.FC = () => {
           const g = data.gpus[i] || {};
           // derive device name from available fields
           const rawName = (g.name || g.model || g.device || `GPU${i}`).toString();
+          const nameStr = Array.isArray(rawName) ? rawName.join(', ') : rawName;
           // sanitize rig_id: replace spaces and non-alphanum with underscore
           const rig_id = rawName.replace(/[^a-zA-Z0-9-_]/g, '_').replace(/\s+/g, '_');
           deviceNamesRef.current[rig_id] = rawName;
@@ -141,13 +175,21 @@ const App: React.FC = () => {
           deviceStatsRef.current[rig_id].push(pt.hashrate);
           // overall stats
           statsRef.current.push(pt.hashrate);
-          addLog(`Miner [${rig_id}]: ${pt.hashrate.toFixed(2)} MH/s, Temp: ${pt.temp}°C`);
+          addLog(`Benchmark ${nameStr}: ${formatHashrate(pt.hashrate)}, Temp: ${pt.temp}°C`);
         });
       }
     } catch {
-      addLog("Waiting for miner stats...");
+      addLog("Waiting for benchmark stats...");
     }
   };
+
+  // функція для відображення хешрейту у зручній одиниці
+  function formatHashrate(hr: number) {
+    if (hr >= 1e9) return (hr / 1e9).toFixed(2) + ' GH/s';
+    if (hr >= 1e6) return (hr / 1e6).toFixed(2) + ' MH/s';
+    if (hr >= 1e3) return (hr / 1e3).toFixed(2) + ' KH/s';
+    return hr.toFixed(2) + ' H/s';
+  }
 
   // Remove old polling effect, now handled by start/stop
 
@@ -188,12 +230,12 @@ const App: React.FC = () => {
 
       {history.length > 0 && (
         <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={history}>
+          <LineChart data={normalizedHistory}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="time" />
             <YAxis
               yAxisId="left"
-              label={{ value: "MH/s", angle: -90, position: "insideLeft" }}
+              label={{ key: unit, value: unit, angle: -90, position: "insideLeft" }}
             />
             <YAxis
               yAxisId="right"
@@ -207,7 +249,7 @@ const App: React.FC = () => {
               type="monotone"
               dataKey="hashrate"
               stroke="#4ade80"
-              name="Hashrate (MH/s)"
+              name="Hashrate"
             />
             <Line
               yAxisId="right"
@@ -239,8 +281,8 @@ const App: React.FC = () => {
         <div style={{ marginTop: 12 }}>
           <h3>Results</h3>
           <div>Samples: {results.samples}</div>
-          <div>Average Hashrate: {results.avg.toFixed(2)} MH/s</div>
-          <div>Max Hashrate: {results.max.toFixed(2)} MH/s</div>
+          <div>Average Hashrate: {formatHashrate(results.avg)}</div>
+          <div>Max Hashrate: {formatHashrate(results.max)}</div>
         </div>
       )}
     </div>

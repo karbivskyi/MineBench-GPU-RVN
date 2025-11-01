@@ -15,11 +15,11 @@ MineBench-GPU-RVN is an Electron-based desktop application for GPU mining benchm
 - Main process: `electron/main.cjs` handles miner process management
 - Preload script: `electron/preload.js` exposes safe IPC communication
 - IPC channels:
-  - `start-miner`: Launches GMiner with configured parameters
-  - `stop-miner`: Terminates the mining process
+  - `start-benchmark`: Launches GMiner with configured parameters
+  - `stop-benchmark`: Terminates the mining process
 
 ### Mining Integration
-- GMiner executable location: `/miner/Gminer/miner.exe`
+- GMiner executable location: `/miner/T-rex/t-rex.exe`
 - Default mining pool: rvn.2miners.com:6060
 - API endpoint: Local GMiner interface at http://127.0.0.1:4067/summary
 - Pool stats: https://rvn.2miners.com/api/accounts/{wallet}
