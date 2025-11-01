@@ -18,6 +18,15 @@ let hashRates = [];
 let temps = [];
 let startTime = null
 
+ipcMain.handle("report-stats", async (event, { temp, power }) => {
+  if (typeof temp === "number") temps.push(temp);
+  if (typeof power === "number") {
+    if (!global.powers) global.powers = [];
+    global.powers.push(power);
+  }
+});
+
+
 function safeNumber(value) {
   if (typeof value !== "number" || !isFinite(value)) return null;
   return Math.min(value, 1e12); // обмеження для запобігання overflow
@@ -194,12 +203,21 @@ ipcMain.handle("stop-benchmark", async (event, benchmarkData) => {
     const data = await si.graphics();
     const gpuName = data.controllers[0]?.model || 'Unknown GPU';
 
+    const avgTemp = temps.length
+      ? temps.reduce((a, b) => a + b, 0) / temps.length
+      : null;
+    const avgPower = (global.powers && global.powers.length)
+      ? global.powers.reduce((a, b) => a + b, 0) / global.powers.length
+      : null;
+
     const benchmarkRecord = {
       device_type: "GPU",
       device_name: gpuName,
       avg_temp: temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null,
       avg_hashrate: safeNumber(avgHash),
       max_hashrate: safeNumber(maxHash),
+      avg_temp: avgTemp,
+      avg_power: avgPower,
       duration_seconds,
       algorithm: "kawpow",
       coin_name: "RVN"

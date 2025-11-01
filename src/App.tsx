@@ -14,6 +14,7 @@ interface StatsPoint {
   time: string;
   hashrate: number;
   temp: number;
+  power: number; // 🟢 нове поле
 }
 
 const App: React.FC = () => {
@@ -41,6 +42,8 @@ const App: React.FC = () => {
     })),
     [history]
   );
+  const powerStatsRef = useRef<number[]>([]);
+
 
 
   const addLog = (message: string) => {
@@ -104,8 +107,15 @@ const App: React.FC = () => {
         const sum = statsRef.current.reduce((a, b) => a + b, 0);
         const avg = sum / samples;
         const max = Math.max(...statsRef.current);
+        const avgTemp = history.length
+          ? history.reduce((a, b) => a + b.temp, 0) / history.length
+          : null;
+
+        const avgPower = powerStatsRef.current.length
+          ? powerStatsRef.current.reduce((a, b) => a + b, 0) / powerStatsRef.current.length
+          : null;
         setResults({ avg, max, samples });
-        benchmarkData = { avg_hashrate: avg, max_hashrate: max };
+        benchmarkData = { avg_hashrate: avg, max_hashrate: max, avg_temp: avgTemp, avg_power: avgPower };
       }
       // compute per-device results
       const perDevice: Array<{ rig_id: string; name: string; avg: number; max: number; samples: number }> = [];
@@ -155,6 +165,7 @@ const App: React.FC = () => {
         const points: StatsPoint[] = data.gpus.map((g: any, i: number) => {
           const hrRaw = (g.hashrate ?? g.hash ?? 0);
           const temp = g.temperature ?? g.temp ?? 0;
+          const power = g.power ?? 0; // 🟢 беремо з API споживання (W)
           const hr = hrRaw; // конвертуємо перед додаванням
           return { time: new Date().toLocaleTimeString(), hashrate: hr, temp };
         });
@@ -175,6 +186,13 @@ const App: React.FC = () => {
           deviceStatsRef.current[rig_id].push(pt.hashrate);
           // overall stats
           statsRef.current.push(pt.hashrate);
+          powerStatsRef.current.push(pt.power); // 🟢 додали ват
+
+          // 🔹 Відправляємо температуру та споживання у бекенд
+          window.electron.invoke("report-stats", {
+            temp: g.temperature ?? g.temp ?? null,
+            power: g.power ?? null, // ⚡ споживання у ватах
+          });
           addLog(`Benchmark ${nameStr}: ${formatHashrate(pt.hashrate)}, Temp: ${pt.temp}°C`);
         });
       }
